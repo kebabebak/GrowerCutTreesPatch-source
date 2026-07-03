@@ -73,7 +73,7 @@ namespace HSK.GrowerCutTreesPatch
             {
                 GrowerCutPlantsDef = DefDatabase<WorkGiverDef>.GetNamedSilentFail("GrowerCutPlants");
                 WorkTabPriorityHelper.CacheGrowingWorkGivers();
-                new Harmony(HarmonyId).PatchAll(typeof(GrowerCutTreesPatchMod).Assembly);
+                new Harmony(HarmonyId).PatchAll();
 
                 int sowWorkGivers = DefDatabase<WorkGiverDef>.AllDefsListForReading
                     .Count(SowWorkCutSuppression.IsSowWorkGiver);
@@ -533,23 +533,32 @@ namespace HSK.GrowerCutTreesPatch
     [HarmonyPatch]
     public static class SeedsPleaseSowSitePatch
     {
-        private static MethodBase TargetMethod()
+        private static MethodBase targetMethod;
+
+        private static bool Prepare()
         {
             if (!ModCompatibility.IsSeedsPleaseLoaded())
             {
-                return null;
+                return false;
             }
 
             Type driverType = AccessTools.TypeByName("SeedsPlease.JobDriver_PlantSowWithSeeds");
             if (driverType == null)
             {
-                return null;
+                return false;
             }
 
-            return AccessTools.Method(
+            targetMethod = AccessTools.Method(
                 driverType,
                 "IsCellOpenForSowingPlantOfType",
                 new[] { typeof(IntVec3), typeof(Map), typeof(ThingDef) });
+
+            return targetMethod != null;
+        }
+
+        private static MethodBase TargetMethod()
+        {
+            return targetMethod;
         }
 
         public static bool Prefix(IntVec3 cell, Map map, ThingDef plantDef, ref bool __result)
