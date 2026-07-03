@@ -2,9 +2,6 @@ $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 
 $required = @(
-    'libs\0Harmony.dll',
-    'libs\Assembly-CSharp.dll',
-    'libs\UnityEngine.CoreModule.dll',
     'libs\WorkTab.dll'
 )
 

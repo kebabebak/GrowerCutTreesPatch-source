@@ -7,7 +7,7 @@ Files to compile `GrowerCutTreesPatch.dll` for RimWorld HSK 1.5.
 ## Requirements
 
 - [.NET SDK](https://dotnet.microsoft.com/download) (builds `net48`)
-- Four reference DLLs in `libs/`
+- `WorkTab.dll` in `libs/` (Harmony and RimWorld refs come from NuGet)
 
 ## Build
 

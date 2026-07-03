@@ -58,17 +58,12 @@ namespace HSK.GrowerCutTreesPatch
         private const string HarmonyId = "hsk.grower.cut.trees.patch";
         private readonly GrowerCutTreesPatchSettings settings;
 
-        public static Harmony HarmonyInstance;
-
         public static WorkGiverDef GrowerCutPlantsDef;
-
-        private static bool patchesApplied;
 
         public GrowerCutTreesPatchMod(ModContentPack content)
             : base(content)
         {
             settings = GetSettings<GrowerCutTreesPatchSettings>();
-            HarmonyInstance = new Harmony(HarmonyId);
             LongEventHandler.ExecuteWhenFinished(InitializeAfterDefsLoaded);
         }
 
@@ -78,12 +73,16 @@ namespace HSK.GrowerCutTreesPatch
             {
                 GrowerCutPlantsDef = DefDatabase<WorkGiverDef>.GetNamedSilentFail("GrowerCutPlants");
                 WorkTabPriorityHelper.CacheGrowingWorkGivers();
-                ApplyPatches();
+                new Harmony(HarmonyId).PatchAll(typeof(GrowerCutTreesPatchMod).Assembly);
+
+                int sowWorkGivers = DefDatabase<WorkGiverDef>.AllDefsListForReading
+                    .Count(SowWorkCutSuppression.IsSowWorkGiver);
                 Log.Message(
                     $"[GrowerCutTreesPatch] Loaded (verbose logging {(GrowerCutTreesPatchSettings.EnableLogging ? "ON" : "OFF")}, " +
                     $"WorkTab={(ModCompatibility.IsWorkTabLoaded() ? "ON" : "OFF")}, " +
                     $"SeedsPlease={(ModCompatibility.IsSeedsPleaseLoaded() ? "ON" : "OFF")}, " +
                     $"GrowerCutPlants priorityInType={GrowerCutPlantsDef?.priorityInType.ToString() ?? "missing"}). " +
+                    $"{sowWorkGivers} farmer sow work giver def(s) route cuts through GrowerCutPlants. " +
                     "Enable logging in mod settings for growing-zone cut/sow traces.");
             }
             catch (Exception ex)
@@ -100,241 +99,6 @@ namespace HSK.GrowerCutTreesPatch
         public override void DoSettingsWindowContents(Rect inRect)
         {
             settings.DrawSettings(inRect);
-        }
-
-        private static void ApplyPatches()
-        {
-            if (patchesApplied)
-            {
-                return;
-            }
-
-            patchesApplied = true;
-
-            // Sow work givers inherit JobOnCell/HasJobOnCell from WorkGiver_Scanner; defs are not ready in Mod ctor.
-            PatchSowCutSuppressionOnScanner();
-
-            if (ModCompatibility.IsSeedsPleaseLoaded())
-            {
-                PatchSeedsPleaseAutoDesignation();
-            }
-            else
-            {
-                PatchLog.Message(
-                    "[GrowerCutTreesPatch] SeedsPlease not loaded; vanilla GrowerSow and GrowerCutPlants paths are active.");
-            }
-
-            PatchGardenerPlantsCutInGrowingZones();
-
-            int sowWorkGivers = DefDatabase<WorkGiverDef>.AllDefsListForReading
-                .Count(SowWorkCutSuppression.IsSowWorkGiver);
-            Log.Message(
-                $"[GrowerCutTreesPatch] Harmony patching completed; " +
-                $"{sowWorkGivers} farmer sow work giver def(s) will route cuts through GrowerCutPlants.");
-        }
-
-        private static void PatchSowCutSuppressionOnScanner()
-        {
-            Type[] cellParameters = { typeof(Pawn), typeof(IntVec3), typeof(bool) };
-
-            PatchScannerMethod(
-                "JobOnCell",
-                cellParameters,
-                typeof(SowWorkCutSuppression),
-                nameof(SowWorkCutSuppression.JobOnCellPostfix),
-                required: true);
-            PatchScannerMethod(
-                "HasJobOnCell",
-                cellParameters,
-                typeof(SowWorkCutSuppression),
-                nameof(SowWorkCutSuppression.HasJobOnCellPostfix),
-                required: true);
-        }
-
-        private static void PatchScannerMethod(
-            string methodName,
-            Type[] parameters,
-            Type patchType,
-            string patchMethodName,
-            bool required)
-        {
-            var target = AccessTools.Method(typeof(WorkGiver_Scanner), methodName, parameters);
-            if (target == null)
-            {
-                var message = $"[GrowerCutTreesPatch] Could not find WorkGiver_Scanner.{methodName}.";
-                if (required)
-                {
-                    Log.Error(message);
-                }
-                else
-                {
-                    Log.Warning(message);
-                }
-
-                return;
-            }
-
-            var postfix = AccessTools.Method(patchType, patchMethodName);
-            if (postfix == null)
-            {
-                Log.Error(
-                    $"[GrowerCutTreesPatch] Could not find postfix {patchType.Name}.{patchMethodName}.");
-                return;
-            }
-
-            if (!HarmonyPatchValidator.ValidatePostfixParameters(target, postfix, out string validationError))
-            {
-                Log.Error($"[GrowerCutTreesPatch] {validationError}");
-                if (required)
-                {
-                    throw new InvalidOperationException(validationError);
-                }
-
-                return;
-            }
-
-            HarmonyInstance.Patch(
-                target,
-                postfix: new HarmonyMethod(postfix));
-            Log.Message(
-                $"[GrowerCutTreesPatch] Patched WorkGiver_Scanner.{methodName} " +
-                $"({HarmonyPatchValidator.DescribeParameters(target)}) for farmer sow cut suppression.");
-        }
-
-        private static void PatchSeedsPleaseAutoDesignation()
-        {
-            Type driverType = AccessTools.TypeByName("SeedsPlease.JobDriver_PlantSowWithSeeds");
-            if (driverType == null)
-            {
-                Log.Warning(
-                    "[GrowerCutTreesPatch] SeedsPlease is loaded but JobDriver_PlantSowWithSeeds was not found.");
-                return;
-            }
-
-            var target = AccessTools.Method(
-                driverType,
-                "IsCellOpenForSowingPlantOfType",
-                new[] { typeof(IntVec3), typeof(Map), typeof(ThingDef) });
-            if (target == null)
-            {
-                Log.Warning(
-                    "[GrowerCutTreesPatch] Could not find SeedsPlease.JobDriver_PlantSowWithSeeds.IsCellOpenForSowingPlantOfType.");
-                return;
-            }
-
-            HarmonyInstance.Patch(
-                target,
-                prefix: new HarmonyMethod(typeof(SeedsPleaseSowSitePatch), nameof(SeedsPleaseSowSitePatch.Prefix)));
-            PatchLog.Message("[GrowerCutTreesPatch] Patched JobDriver_PlantSowWithSeeds.IsCellOpenForSowingPlantOfType.");
-        }
-
-        private static void PatchGardenerPlantsCutInGrowingZones()
-        {
-            Type[] thingParameters = { typeof(Pawn), typeof(Thing), typeof(bool) };
-
-            PatchGardenerMethod(
-                typeof(WorkGiver_PlantsCut),
-                "JobOnThing",
-                thingParameters,
-                typeof(GardenerGrowingZoneCutPatch),
-                nameof(GardenerGrowingZoneCutPatch.JobOnThingPostfix));
-
-            // HasJobOnThing is declared on WorkGiver_Scanner, not overridden by WorkGiver_PlantsCut.
-            PatchGardenerMethod(
-                typeof(WorkGiver_Scanner),
-                "HasJobOnThing",
-                thingParameters,
-                typeof(GardenerGrowingZoneCutPatch),
-                nameof(GardenerGrowingZoneCutPatch.HasJobOnThingPostfix));
-        }
-
-        private static void PatchGardenerMethod(
-            Type declaringType,
-            string methodName,
-            Type[] parameters,
-            Type patchType,
-            string patchMethodName)
-        {
-            var target = AccessTools.Method(declaringType, methodName, parameters);
-            if (target == null)
-            {
-                Log.Error(
-                    $"[GrowerCutTreesPatch] Could not find {declaringType.Name}.{methodName}.");
-                return;
-            }
-
-            var postfix = AccessTools.Method(patchType, patchMethodName);
-            if (postfix == null)
-            {
-                Log.Error(
-                    $"[GrowerCutTreesPatch] Could not find postfix {patchType.Name}.{patchMethodName}.");
-                return;
-            }
-
-            if (!HarmonyPatchValidator.ValidatePostfixParameters(target, postfix, out string validationError))
-            {
-                Log.Error($"[GrowerCutTreesPatch] {validationError}");
-                return;
-            }
-
-            HarmonyInstance.Patch(
-                target,
-                postfix: new HarmonyMethod(postfix));
-            Log.Message(
-                $"[GrowerCutTreesPatch] Patched {declaringType.Name}.{methodName} " +
-                $"({HarmonyPatchValidator.DescribeParameters(target)}) to block gardener cuts in growing zones.");
-        }
-    }
-
-    internal static class HarmonyPatchValidator
-    {
-        public static bool ValidatePostfixParameters(MethodInfo original, MethodInfo postfix, out string error)
-        {
-            error = null;
-            if (original == null || postfix == null)
-            {
-                error = "Original or postfix method is null.";
-                return false;
-            }
-
-            var originalNames = new HashSet<string>(
-                original.GetParameters().Select(parameter => parameter.Name));
-
-            foreach (ParameterInfo patchParameter in postfix.GetParameters())
-            {
-                if (patchParameter.Name.StartsWith("__", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (!originalNames.Contains(patchParameter.Name))
-                {
-                    error =
-                        $"Postfix {postfix.DeclaringType?.Name}.{postfix.Name}: parameter \"{patchParameter.Name}\" " +
-                        $"not found in {DescribeMethod(original)}. " +
-                        "Harmony requires postfix argument names to match the original method exactly.";
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        public static string DescribeParameters(MethodInfo method)
-        {
-            if (method == null)
-            {
-                return "<null>";
-            }
-
-            return string.Join(
-                ", ",
-                method.GetParameters().Select(parameter => parameter.ParameterType.Name + " " + parameter.Name));
-        }
-
-        private static string DescribeMethod(MethodInfo method)
-        {
-            return $"{method.DeclaringType?.Name}::{method.Name}({DescribeParameters(method)})";
         }
     }
 
@@ -643,7 +407,7 @@ namespace HSK.GrowerCutTreesPatch
                    typeof(WorkGiver_GrowerSow).IsAssignableFrom(workGiver.giverClass);
         }
 
-        public static void JobOnCellPostfix(ref Job __result, Pawn pawn, IntVec3 cell, WorkGiver __instance)
+        internal static void SuppressJobOnCell(ref Job __result, Pawn pawn, IntVec3 cell, WorkGiver __instance)
         {
             if (__result == null || !IsCutPlantJob(__result))
             {
@@ -678,12 +442,7 @@ namespace HSK.GrowerCutTreesPatch
             __result = null;
         }
 
-        // RimWorld names this IntVec3 "cell" in JobOnCell but "c" in HasJobOnCell.
-        public static void HasJobOnCellPostfix(
-            ref bool __result,
-            Pawn pawn,
-            IntVec3 c,
-            WorkGiver __instance)
+        internal static void SuppressHasJobOnCell(ref bool __result, Pawn pawn, IntVec3 c, WorkGiver __instance)
         {
             if (!__result ||
                 __instance?.def == null ||
@@ -753,8 +512,46 @@ namespace HSK.GrowerCutTreesPatch
         }
     }
 
+    [HarmonyPatch(typeof(WorkGiver_Scanner), nameof(WorkGiver_Scanner.JobOnCell))]
+    public static class SowWorkCutSuppressionJobOnCellPatch
+    {
+        public static void Postfix(ref Job __result, Pawn pawn, IntVec3 cell, WorkGiver __instance)
+        {
+            SowWorkCutSuppression.SuppressJobOnCell(ref __result, pawn, cell, __instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(WorkGiver_Scanner), nameof(WorkGiver_Scanner.HasJobOnCell))]
+    public static class SowWorkCutSuppressionHasJobOnCellPatch
+    {
+        public static void Postfix(ref bool __result, Pawn pawn, IntVec3 c, WorkGiver __instance)
+        {
+            SowWorkCutSuppression.SuppressHasJobOnCell(ref __result, pawn, c, __instance);
+        }
+    }
+
+    [HarmonyPatch]
     public static class SeedsPleaseSowSitePatch
     {
+        private static MethodBase TargetMethod()
+        {
+            if (!ModCompatibility.IsSeedsPleaseLoaded())
+            {
+                return null;
+            }
+
+            Type driverType = AccessTools.TypeByName("SeedsPlease.JobDriver_PlantSowWithSeeds");
+            if (driverType == null)
+            {
+                return null;
+            }
+
+            return AccessTools.Method(
+                driverType,
+                "IsCellOpenForSowingPlantOfType",
+                new[] { typeof(IntVec3), typeof(Map), typeof(ThingDef) });
+        }
+
         public static bool Prefix(IntVec3 cell, Map map, ThingDef plantDef, ref bool __result)
         {
             foreach (Thing thing in map.thingGrid.ThingsListAt(cell))
@@ -777,7 +574,7 @@ namespace HSK.GrowerCutTreesPatch
 
     public static class GardenerGrowingZoneCutPatch
     {
-        public static void JobOnThingPostfix(ref Job __result, Pawn pawn, Thing t, WorkGiver __instance)
+        internal static void SuppressJobOnThing(ref Job __result, Pawn pawn, Thing t, WorkGiver __instance)
         {
             if (!IsGardenerCutWorkGiver(__instance?.def?.defName) || __result == null ||
                 !TryBlockGrowingZoneCut(pawn, t, out Zone_Growing zone))
@@ -802,7 +599,7 @@ namespace HSK.GrowerCutTreesPatch
             __result = null;
         }
 
-        public static void HasJobOnThingPostfix(
+        internal static void SuppressHasJobOnThing(
             ref bool __result,
             Pawn pawn,
             Thing t,
@@ -829,6 +626,24 @@ namespace HSK.GrowerCutTreesPatch
         {
             zone = null;
             return GrowingWorkUtility.IsGrowingZoneCutPlant(t, pawn?.Map, out zone);
+        }
+    }
+
+    [HarmonyPatch(typeof(WorkGiver_PlantsCut), nameof(WorkGiver_PlantsCut.JobOnThing))]
+    public static class GardenerGrowingZoneCutJobOnThingPatch
+    {
+        public static void Postfix(ref Job __result, Pawn pawn, Thing t, WorkGiver __instance)
+        {
+            GardenerGrowingZoneCutPatch.SuppressJobOnThing(ref __result, pawn, t, __instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(WorkGiver_Scanner), nameof(WorkGiver_Scanner.HasJobOnThing))]
+    public static class GardenerGrowingZoneCutHasJobOnThingPatch
+    {
+        public static void Postfix(ref bool __result, Pawn pawn, Thing t, WorkGiver_Scanner __instance)
+        {
+            GardenerGrowingZoneCutPatch.SuppressHasJobOnThing(ref __result, pawn, t, __instance);
         }
     }
 
