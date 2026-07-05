@@ -73,7 +73,8 @@ namespace HSK.GrowerCutTreesPatch
             {
                 GrowerCutPlantsDef = DefDatabase<WorkGiverDef>.GetNamedSilentFail("GrowerCutPlants");
                 WorkTabPriorityHelper.CacheGrowingWorkGivers();
-                new Harmony(HarmonyId).PatchAll();
+                // Bare PatchAll() resolves the caller assembly via stack trace; inlining or callbacks can skip patches silently.
+                new Harmony(HarmonyId).PatchAll(Assembly.GetExecutingAssembly());
 
                 int sowWorkGivers = DefDatabase<WorkGiverDef>.AllDefsListForReading
                     .Count(SowWorkCutSuppression.IsSowWorkGiver);
