@@ -105,7 +105,19 @@ namespace HSK.GrowerCutTreesPatch
 
     public static class WorkTabPriorityHelper
     {
+        private const int DeferCutCacheTicks = 30;
+        private const int DeferCutCacheCleanupIntervalTicks = 250;
+
         private static List<WorkGiverDef> growingWorkGivers;
+        private static readonly Dictionary<int, DeferCutCacheEntry> deferCutCache = new Dictionary<int, DeferCutCacheEntry>();
+        private static int lastDeferCutCacheCleanupTick = -1;
+
+        private struct DeferCutCacheEntry
+        {
+            public int ValidUntilTick;
+            public int Hour;
+            public bool Defer;
+        }
 
         public static void CacheGrowingWorkGivers()
         {
@@ -162,46 +174,104 @@ namespace HSK.GrowerCutTreesPatch
                 return true;
             }
 
+            int hour = GetCurrentPriorityHour(pawn);
+            int tick = Find.TickManager?.TicksGame ?? 0;
+            int pawnId = pawn.thingIDNumber;
+            MaybeCleanupDeferCutCache(tick);
+
+            if (deferCutCache.TryGetValue(pawnId, out DeferCutCacheEntry cached) &&
+                tick <= cached.ValidUntilTick &&
+                cached.Hour == hour)
+            {
+                return cached.Defer;
+            }
+
+            bool defer;
             try
             {
-                int cutPriority = GetWorkGiverPriority(pawn, cutWorkGiver);
-                EnsureGrowingWorkGiversCached();
-
-                foreach (WorkGiverDef workGiver in growingWorkGivers)
-                {
-                    if (workGiver == null ||
-                        workGiver == cutWorkGiver ||
-                        workGiver.workType != WorkTypeDefOf.Growing)
-                    {
-                        continue;
-                    }
-
-                    int otherPriority = GetWorkGiverPriority(pawn, workGiver);
-                    if (otherPriority <= 0 || otherPriority >= cutPriority)
-                    {
-                        continue;
-                    }
-
-                    if (GrowingWorkUtility.HasGrowingWorkPending(pawn, workGiver))
-                    {
-                        PatchLog.Message(
-                            $"[GrowerCutTreesPatch] Deferring {cutWorkGiver.defName} for {DescribePawn(pawn)} " +
-                            $"because higher-priority Growing work {workGiver.defName} " +
-                            $"(prio {otherPriority} < {cutPriority}) is available.");
-                        return true;
-                    }
-                }
-
-                PatchLog.Message(
-                    $"[GrowerCutTreesPatch] ShouldDeferCutting: {DescribePawn(pawn)} may cut " +
-                    $"(cut prio={cutPriority}, snapshot={DescribeGrowingPriorities(pawn)}).");
-                return false;
+                defer = ComputeShouldDeferCutting(pawn, cutWorkGiver);
             }
             catch (Exception ex)
             {
                 PatchLog.Warning(
                     $"[GrowerCutTreesPatch] ShouldDeferCutting failed for {DescribePawn(pawn)}: {ex.Message}");
-                return false;
+                defer = false;
+            }
+
+            deferCutCache[pawnId] = new DeferCutCacheEntry
+            {
+                ValidUntilTick = tick + DeferCutCacheTicks,
+                Hour = hour,
+                Defer = defer,
+            };
+            return defer;
+        }
+
+        private static bool ComputeShouldDeferCutting(Pawn pawn, WorkGiverDef cutWorkGiver)
+        {
+            int cutPriority = GetWorkGiverPriority(pawn, cutWorkGiver);
+            EnsureGrowingWorkGiversCached();
+
+            foreach (WorkGiverDef workGiver in growingWorkGivers)
+            {
+                if (workGiver == null ||
+                    workGiver == cutWorkGiver ||
+                    workGiver.workType != WorkTypeDefOf.Growing)
+                {
+                    continue;
+                }
+
+                int otherPriority = GetWorkGiverPriority(pawn, workGiver);
+                if (otherPriority <= 0 || otherPriority >= cutPriority)
+                {
+                    continue;
+                }
+
+                if (GrowingWorkUtility.HasGrowingWorkPendingCached(pawn, workGiver))
+                {
+                    PatchLog.Message(
+                        $"[GrowerCutTreesPatch] Deferring {cutWorkGiver.defName} for {DescribePawn(pawn)} " +
+                        $"because higher-priority Growing work {workGiver.defName} " +
+                        $"(prio {otherPriority} < {cutPriority}) is available.");
+                    return true;
+                }
+            }
+
+            PatchLog.Message(
+                $"[GrowerCutTreesPatch] ShouldDeferCutting: {DescribePawn(pawn)} may cut " +
+                $"(cut prio={cutPriority}, snapshot={DescribeGrowingPriorities(pawn)}).");
+            return false;
+        }
+
+        private static void MaybeCleanupDeferCutCache(int tick)
+        {
+            if (lastDeferCutCacheCleanupTick >= 0 &&
+                tick - lastDeferCutCacheCleanupTick < DeferCutCacheCleanupIntervalTicks)
+            {
+                return;
+            }
+
+            lastDeferCutCacheCleanupTick = tick;
+            List<int> expiredPawnIds = null;
+            foreach (KeyValuePair<int, DeferCutCacheEntry> entry in deferCutCache)
+            {
+                if (tick <= entry.Value.ValidUntilTick)
+                {
+                    continue;
+                }
+
+                expiredPawnIds ??= new List<int>();
+                expiredPawnIds.Add(entry.Key);
+            }
+
+            if (expiredPawnIds == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < expiredPawnIds.Count; i++)
+            {
+                deferCutCache.Remove(expiredPawnIds[i]);
             }
         }
 
@@ -245,6 +315,65 @@ namespace HSK.GrowerCutTreesPatch
 
     public static class GrowingWorkUtility
     {
+        private const int PendingWorkCacheTicks = 30;
+
+        private static readonly Dictionary<GrowingWorkPendingCacheKey, bool> pendingWorkCache =
+            new Dictionary<GrowingWorkPendingCacheKey, bool>();
+        private static int pendingWorkCacheBucket = -1;
+
+        private struct GrowingWorkPendingCacheKey : IEquatable<GrowingWorkPendingCacheKey>
+        {
+            public int PawnId;
+            public string WorkGiverDefName;
+
+            public bool Equals(GrowingWorkPendingCacheKey other)
+            {
+                return PawnId == other.PawnId && WorkGiverDefName == other.WorkGiverDefName;
+            }
+
+            public override bool Equals(object obj)
+            {
+                return obj is GrowingWorkPendingCacheKey other && Equals(other);
+            }
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    return (PawnId * 397) ^ (WorkGiverDefName?.GetHashCode() ?? 0);
+                }
+            }
+        }
+
+        public static bool HasGrowingWorkPendingCached(Pawn pawn, WorkGiverDef workGiver)
+        {
+            if (pawn == null || workGiver == null)
+            {
+                return false;
+            }
+
+            int bucket = (Find.TickManager?.TicksGame ?? 0) / PendingWorkCacheTicks;
+            if (bucket != pendingWorkCacheBucket)
+            {
+                pendingWorkCache.Clear();
+                pendingWorkCacheBucket = bucket;
+            }
+
+            var key = new GrowingWorkPendingCacheKey
+            {
+                PawnId = pawn.thingIDNumber,
+                WorkGiverDefName = workGiver.defName,
+            };
+            if (pendingWorkCache.TryGetValue(key, out bool cached))
+            {
+                return cached;
+            }
+
+            bool pending = HasGrowingWorkPending(pawn, workGiver);
+            pendingWorkCache[key] = pending;
+            return pending;
+        }
+
         public static bool HasGrowingWorkPending(Pawn pawn, WorkGiverDef workGiver)
         {
             if (SowWorkCutSuppression.IsSowWorkGiver(workGiver))
@@ -337,27 +466,40 @@ namespace HSK.GrowerCutTreesPatch
                     return false;
                 }
 
-                IEnumerable<IntVec3> cells = scanner.PotentialWorkCellsGlobal(pawn);
-                if (cells == null)
+                Map map = pawn.Map;
+                Danger maxDanger = pawn.NormalMaxDanger();
+                List<Zone> zonesList = map.zoneManager.AllZones;
+                for (int i = 0; i < zonesList.Count; i++)
                 {
-                    return false;
-                }
-
-                foreach (IntVec3 cell in cells)
-                {
-                    // Cells blocked by trees are not actionable sow work; our sow HasJobOnCell
-                    // postfix already hides cut-only jobs when cut is routed through GrowerCutPlants.
-                    if (GrowerZoneCutUtility.CellNeedsCutBeforeSow(pawn, cell))
+                    if (zonesList[i] is not Zone_Growing growZone ||
+                        growZone.cells.Count == 0 ||
+                        growZone.ContainsStaticFire)
                     {
                         continue;
                     }
 
-                    if (scanner.HasJobOnCell(pawn, cell, forced: false))
+                    if (!pawn.CanReach(growZone.Cells[0], PathEndMode.OnCell, maxDanger))
                     {
-                        PatchLog.Message(
-                            $"[GrowerCutTreesPatch] HasPendingSowWork: {workGiver.defName} found sow cell " +
-                            $"{cell} for {DescribePawn(pawn)}.");
-                        return true;
+                        continue;
+                    }
+
+                    for (int j = 0; j < growZone.cells.Count; j++)
+                    {
+                        IntVec3 cell = growZone.cells[j];
+                        // Cells blocked by trees are not actionable sow work; our sow HasJobOnCell
+                        // postfix already hides cut-only jobs when cut is routed through GrowerCutPlants.
+                        if (GrowerZoneCutUtility.CellNeedsCutBeforeSow(pawn, cell))
+                        {
+                            continue;
+                        }
+
+                        if (scanner.HasJobOnCell(pawn, cell, forced: false))
+                        {
+                            PatchLog.Message(
+                                $"[GrowerCutTreesPatch] HasPendingSowWork: {workGiver.defName} found sow cell " +
+                                $"{cell} for {DescribePawn(pawn)}.");
+                            return true;
+                        }
                     }
                 }
             }
