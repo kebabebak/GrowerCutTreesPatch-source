@@ -688,6 +688,9 @@ namespace HSK.GrowerCutTreesPatch
             Type driverType = AccessTools.TypeByName("SeedsPlease.JobDriver_PlantSowWithSeeds");
             if (driverType == null)
             {
+                Log.WarningOnce(
+                    "[GrowerCutTreesPatch] SeedsPlease is loaded but JobDriver_PlantSowWithSeeds was not found.",
+                    0x1f6a8d20);
                 return false;
             }
 
@@ -696,7 +699,15 @@ namespace HSK.GrowerCutTreesPatch
                 "IsCellOpenForSowingPlantOfType",
                 new[] { typeof(IntVec3), typeof(Map), typeof(ThingDef) });
 
-            return targetMethod != null;
+            if (targetMethod != null)
+            {
+                return true;
+            }
+
+            Log.WarningOnce(
+                "[GrowerCutTreesPatch] SeedsPlease is loaded but IsCellOpenForSowingPlantOfType was not found.",
+                0x2b7c4e91);
+            return false;
         }
 
         private static MethodBase TargetMethod()
