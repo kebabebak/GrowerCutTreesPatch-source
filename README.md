@@ -12,12 +12,6 @@ Files to compile `GrowerCutTreesPatch.dll` for RimWorld HSK 1.5.
 ## Build
 
 ```powershell
-.\build.ps1
-```
-
-Or:
-
-```powershell
 dotnet build GrowerCutTreesPatch.csproj -c Release
 ```
 
