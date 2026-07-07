@@ -55,7 +55,7 @@ namespace HSK.GrowerCutTreesPatch
 
     public class GrowerCutTreesPatchMod : Mod
     {
-        private const string HarmonyId = "hsk.grower.cut.trees.patch";
+        private const string HarmonyId = "kebabebak.grower.cut.trees.patch";
         private readonly GrowerCutTreesPatchSettings settings;
 
         public static WorkGiverDef GrowerCutPlantsDef;
