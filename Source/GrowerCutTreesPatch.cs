@@ -22,6 +22,7 @@ using WorkTab;
  * 2. Suppress embedded CutPlant from sow work givers (JobOnCell + HasJobOnCell).
  * 3. Optionally patch SeedsPlease auto-designation when that mod is present.
  * 4. Route growing-zone CutPlant designations away from Gardener; respect Work Tab priorities.
+ * 5. GrowerCutPlants accepts blighted / CutPlant-designated zone crops (mandatory cuts).
  */
 namespace HSK.GrowerCutTreesPatch
 {
@@ -916,6 +917,25 @@ namespace HSK.GrowerCutTreesPatch
             return TryFindCutTarget(pawn, c, forced: false, out _);
         }
 
+        /// <summary>
+        /// Blighted crops or explicit CutPlant designations (incl. Plant CutAllBlight gizmo)
+        /// must be cleared even when the plant matches the growing zone crop.
+        /// </summary>
+        public static bool IsMandatoryCut(Plant plant, Map map)
+        {
+            if (plant == null || plant.Destroyed || map == null)
+            {
+                return false;
+            }
+
+            if (plant.Blighted)
+            {
+                return true;
+            }
+
+            return map.designationManager.DesignationOn(plant, DesignationDefOf.CutPlant) != null;
+        }
+
         public static bool TryFindCutTarget(Pawn pawn, IntVec3 c, bool forced, out Plant result)
         {
             result = null;
@@ -929,6 +949,25 @@ namespace HSK.GrowerCutTreesPatch
             if (zone == null || !zone.allowCut)
             {
                 return false;
+            }
+
+            Plant mandatoryPlantOnCell = c.GetPlant(map);
+            if (mandatoryPlantOnCell != null &&
+                IsMandatoryCut(mandatoryPlantOnCell, map) &&
+                TryAcceptCutTarget(
+                    pawn,
+                    mandatoryPlantOnCell,
+                    zone,
+                    c,
+                    map,
+                    forced,
+                    out result,
+                    allowZoneCrop: true))
+            {
+                PatchLog.Message(
+                    $"[GrowerCutTreesPatch] Mandatory cut at {c}: {DescribePlant(result)} " +
+                    $"(blighted={result.Blighted}, designated CutPlant).");
+                return true;
             }
 
             if (!PlantUtility.GrowthSeasonNow(c, map, forSowing: true))
@@ -947,6 +986,23 @@ namespace HSK.GrowerCutTreesPatch
             {
                 if (thingList[i].def == wantedPlantDef)
                 {
+                    if (thingList[i] is Plant zoneCrop &&
+                        IsMandatoryCut(zoneCrop, map) &&
+                        TryAcceptCutTarget(
+                            pawn,
+                            zoneCrop,
+                            zone,
+                            c,
+                            map,
+                            forced,
+                            out result,
+                            allowZoneCrop: true))
+                    {
+                        PatchLog.Message(
+                            $"[GrowerCutTreesPatch] Mandatory zone-crop cut at {c}: {DescribePlant(result)}.");
+                        return true;
+                    }
+
                     return false;
                 }
             }
@@ -991,7 +1047,8 @@ namespace HSK.GrowerCutTreesPatch
             IntVec3 sowCell,
             Map map,
             bool forced,
-            out Plant result)
+            out Plant result,
+            bool allowZoneCrop = false)
         {
             result = null;
             if (plantThing == null || plantThing.Destroyed || plantThing.IsForbidden(pawn))
@@ -1020,19 +1077,22 @@ namespace HSK.GrowerCutTreesPatch
                 return false;
             }
 
-            if (plantZone != null &&
-                plantZone != sowZone &&
-                plantZone.GetPlantDefToGrow() == plantThing.def)
+            if (!allowZoneCrop)
             {
-                return false;
-            }
+                if (plantZone != null &&
+                    plantZone != sowZone &&
+                    plantZone.GetPlantDefToGrow() == plantThing.def)
+                {
+                    return false;
+                }
 
-            IPlantToGrowSettable plantSettable = plantThing.Position.GetPlantToGrowSettable(map);
-            if (plantSettable != null &&
-                plantSettable.GetPlantDefToGrow() == plantThing.def &&
-                (plantZone == null || plantZone == sowZone))
-            {
-                return false;
+                IPlantToGrowSettable plantSettable = plantThing.Position.GetPlantToGrowSettable(map);
+                if (plantSettable != null &&
+                    plantSettable.GetPlantDefToGrow() == plantThing.def &&
+                    (plantZone == null || plantZone == sowZone))
+                {
+                    return false;
+                }
             }
 
             result = plantThing as Plant;
@@ -1042,6 +1102,16 @@ namespace HSK.GrowerCutTreesPatch
             }
 
             return true;
+        }
+
+        private static string DescribePlant(Plant plant)
+        {
+            if (plant == null)
+            {
+                return "<null>";
+            }
+
+            return $"{plant.LabelShort} ({plant.def?.defName}) at {plant.Position}";
         }
     }
 
