@@ -1,6 +1,6 @@
 # GrowerCutTreesPatch — build kit
 
-Ready-to-use patch is here: https://github.com/kebabebak/HSK-Grower-Cut-Trees-Patch
+> Ready-to-use patch is here: https://github.com/kebabebak/HSK-Grower-Cut-Trees-Patch
 
 Files to compile `GrowerCutTreesPatch.dll` for RimWorld HSK 1.5.
 
