@@ -656,6 +656,8 @@ namespace HSK.GrowerCutTreesPatch
         }
     }
 
+    // Postfix on shared WorkGiver_Scanner API; SowWorkCutSuppression early-returns unless the
+    // instance is a farmer sow work giver (Harmony etiquette: no prefix skip on shared methods).
     [HarmonyPatch(typeof(WorkGiver_Scanner), nameof(WorkGiver_Scanner.JobOnCell))]
     public static class SowWorkCutSuppressionJobOnCellPatch
     {
@@ -665,6 +667,8 @@ namespace HSK.GrowerCutTreesPatch
         }
     }
 
+    // Postfix on shared WorkGiver_Scanner API; SowWorkCutSuppression early-returns unless the
+    // instance is a farmer sow work giver (Harmony etiquette: no prefix skip on shared methods).
     [HarmonyPatch(typeof(WorkGiver_Scanner), nameof(WorkGiver_Scanner.HasJobOnCell))]
     public static class SowWorkCutSuppressionHasJobOnCellPatch
     {
@@ -674,6 +678,13 @@ namespace HSK.GrowerCutTreesPatch
         }
     }
 
+    /// <summary>
+    /// SeedsPlease-only hook. Prefix skip is intentional: when a blocking plant occupies the sow
+    /// cell we must veto auto-designation before SeedsPlease IsCellOpenForSowingPlantOfType runs.
+    /// A Postfix would run after that check and could not stop the designation path. Skip is
+    /// conditional (return true when no blocker). Target is a SeedsPlease driver helper, not
+    /// shared vanilla or JobDriver API.
+    /// </summary>
     [HarmonyPatch]
     public static class SeedsPleaseSowSitePatch
     {
@@ -729,6 +740,7 @@ namespace HSK.GrowerCutTreesPatch
                     $"[GrowerCutTreesPatch] Blocked SeedsPlease auto-designation at {cell} for {thing.LabelShort}; " +
                     "growing-zone clearing uses GrowerCutPlants only.");
                 __result = false;
+                // Harmony: skip SeedsPlease open-cell check only when a blocking plant is present.
                 return false;
             }
 
@@ -793,6 +805,8 @@ namespace HSK.GrowerCutTreesPatch
         }
     }
 
+    // Postfix on WorkGiver_PlantsCut.JobOnThing; SuppressJobOnThing filters Gardener work givers
+    // and growing-zone targets inside (Harmony etiquette: no prefix skip on shared work givers).
     [HarmonyPatch(typeof(WorkGiver_PlantsCut), nameof(WorkGiver_PlantsCut.JobOnThing))]
     public static class GardenerGrowingZoneCutJobOnThingPatch
     {
@@ -802,6 +816,7 @@ namespace HSK.GrowerCutTreesPatch
         }
     }
 
+    // Postfix on shared WorkGiver_Scanner.HasJobOnThing; SuppressHasJobOnThing filters inside.
     [HarmonyPatch(typeof(WorkGiver_Scanner), nameof(WorkGiver_Scanner.HasJobOnThing))]
     public static class GardenerGrowingZoneCutHasJobOnThingPatch
     {
