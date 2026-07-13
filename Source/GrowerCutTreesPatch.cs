@@ -10,20 +10,6 @@ using Verse;
 using Verse.AI;
 using WorkTab;
 
-/*
- * GrowerCutTreesPatch
- *
- * Problem:
- * In HSK, sowing in growing zones embeds CutPlant jobs and SeedsPlease auto-designates trees for
- * the Gardener (PlantCutting) work type. Clearing cannot be prioritized separately under Farmer.
- *
- * Solution:
- * 1. GrowerCutPlants WorkGiverDef under Growing with its own Work Tab sub-priority.
- * 2. Suppress embedded CutPlant from sow work givers (JobOnCell + HasJobOnCell).
- * 3. Optionally patch SeedsPlease auto-designation when that mod is present.
- * 4. Route growing-zone CutPlant designations away from Gardener; respect Work Tab priorities.
- * 5. GrowerCutPlants accepts blighted / CutPlant-designated zone crops (mandatory cuts).
- */
 namespace HSK.GrowerCutTreesPatch
 {
     public static class ModCompatibility
@@ -54,6 +40,27 @@ namespace HSK.GrowerCutTreesPatch
         }
     }
 
+    /// <summary>
+    /// Problem: in HSK, sowing in growing zones embeds CutPlant jobs and SeedsPlease
+    /// auto-designates trees for the Gardener (PlantCutting) work type. Clearing cannot be
+    /// prioritized separately under Farmer.
+    ///
+    /// Fix: GrowerCutPlants WorkGiverDef under Growing with its own Work Tab sub-priority;
+    /// suppress embedded CutPlant from sow work givers (JobOnCell + HasJobOnCell); optionally
+    /// patch SeedsPlease auto-designation when that mod is present; route growing-zone CutPlant
+    /// designations away from Gardener while respecting Work Tab priorities; GrowerCutPlants
+    /// accepts blighted / CutPlant-designated zone crops (mandatory cuts).
+    ///
+    /// Проблема: в HSK посев в growing zones встраивает CutPlant, а SeedsPlease auto-designates
+    /// деревья на work type Gardener (PlantCutting). Очистку нельзя отдельно приоритизировать
+    /// под Farmer.
+    ///
+    /// Исправление: WorkGiverDef GrowerCutPlants под Growing со своим sub-priority в Work Tab;
+    /// подавление встроенного CutPlant у sow work givers (JobOnCell + HasJobOnCell); опциональный
+    /// патч SeedsPlease auto-designation; маршрутизация CutPlant designations зоны выращивания
+    /// мимо Gardener с учётом приоритетов Work Tab; GrowerCutPlants берёт blighted /
+    /// CutPlant-designated культуры зоны (обязательные рубки).
+    /// </summary>
     public class GrowerCutTreesPatchMod : Mod
     {
         private const string HarmonyId = "kebabebak.grower.cut.trees.patch";
@@ -684,6 +691,11 @@ namespace HSK.GrowerCutTreesPatch
     /// A Postfix would run after that check and could not stop the designation path. Skip is
     /// conditional (return true when no blocker). Target is a SeedsPlease driver helper, not
     /// shared vanilla or JobDriver API.
+    ///
+    /// Хук только для SeedsPlease. Prefix skip намеренный: при блокирующем растении на клетке
+    /// посева нужно ветировать auto-designation до IsCellOpenForSowingPlantOfType. Postfix шёл
+    /// бы после проверки и не мог бы остановить designation. Skip условный (return true без
+    /// блокера). Цель — helper драйвера SeedsPlease, не общий vanilla / JobDriver API.
     /// </summary>
     [HarmonyPatch]
     public static class SeedsPleaseSowSitePatch
@@ -935,6 +947,9 @@ namespace HSK.GrowerCutTreesPatch
         /// <summary>
         /// Blighted crops or explicit CutPlant designations (incl. Plant CutAllBlight gizmo)
         /// must be cleared even when the plant matches the growing zone crop.
+        ///
+        /// Blighted культуры или явные CutPlant designations (в т.ч. gizmo Plant CutAllBlight)
+        /// нужно убирать даже если растение совпадает с культурой зоны выращивания.
         /// </summary>
         public static bool IsMandatoryCut(Plant plant, Map map)
         {
